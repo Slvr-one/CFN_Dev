@@ -1,0 +1,149 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: a test template
+  
+Parameters:
+  # Stage:
+  #   Type: String
+  #   Default: 'beta'
+  #   AllowedValues:
+  #       - beta
+  #       - gamma
+  #       - prod
+  FirstName:
+    Description: The name 
+    Type: String
+  # OzId:
+  #   Description: the organization id
+  #   Type: String
+  JenkinsAmiID:
+    Description: the ami id to use for jenkins server
+    Type: 'AWS::EC2::Image::Id'
+    Default: 'ami-02c14281d68d922ad'
+  JenkinsInstanceType:
+    # Description: the instace type for ec2 of jenkins server
+    Type: String
+    Default: t2.micro
+    AllowedValues:
+      - t2.micro
+      - m1.small
+      - m1.large
+    Description: Enter t2.micro, m1.small, or m1.large. Default is t2.micro.
+  JenkinsVPC:
+    Description: the vpc to deploy jenkins ec2 in
+    Type: String
+    Default: 'vpc-0af2feb1fcdfa8f39'
+
+Resources:
+  JenkinsEC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref JenkinsAmiID
+      InstanceType: !Ref JenkinsInstanceType
+      SecurityGroupIds:
+        - !Ref JenkinsSecurityGroup
+      UserData:
+        Fn::Base64: >
+          #!/bin/bash -xe
+          yum update -y
+          amazon-linux-extras install corretto8
+          yum install jq unzip git -y
+
+          wget -O /etc/yum.repos.d/jenkins.repo http://pkg.jenkins-ci.org/redhat/jenkins.repo
+          rpm --import https://pkg.jenkins.io/redhat/jenkins.io.key
+          yum install jenkins -y
+          service jenkins start
+
+  JenkinsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Jenkins Security Group
+      VpcId: !Ref JenkinsVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          CidrIp: 0.0.0.0/0
+
+
+#------------------Bucket-------------------
+  JenkinsS3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Join ['', ['jenkins-', !Ref FirstName, '-bucket-', !Ref AWS::AccountId]]
+      BucketEncryption:
+        ServerSideEncryptionConfiguration: 
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: 'AES256'
+      PublicAccessBlockConfiguration: 
+        BlockPublicAcls: True
+        BlockPublicPolicy: True
+        IgnorePublicAcls: True
+        RestrictPublicBuckets: True
+      # Tags: 
+      #   - Key: Name
+      #     Value: !Join ['', ['Jenkins-', !Ref FirstName, '-bucket-', !Ref AWS::AccountId]]
+  S3BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref JenkinsS3Bucket
+      PolicyDocument: 
+        "Version": "2012-10-17"
+        "Statement":
+          "Sid": "AWSCloudTrailAclCheck20150319"
+          "Effect": "Allow"
+          "Principal": 
+              "Service": "cloudtrail.amazonaws.com"
+          
+          "Action": "s3:GetBucketAcl"
+          "Resource": !GetAtt JenkinsS3Bucket.Arn
+          "Condition": 
+              "StringEquals": 
+                  "AWS:SourceArn": !Join ['',['arn:aws:cloudtrail:', !Ref AWS::Region, ':' , !Ref AWS::AccountId, ':trail/Test-cloudtrail' ]]
+        #         {
+        #             "Sid": "AWSCloudTrailWrite20150319",
+        #             "Effect": "Allow",
+        #             "Principal": {
+        #                 "Service": "cloudtrail.amazonaws.com"
+        #             },
+        #             "Action": "s3:PutObject",
+        #             "Resource": !Join ['', [!GetAtt JenkinsS3Bucket.Arn, '/AWSLogs/', !Ref AWS::AccountId, '/*']],
+        #             "Condition": {
+        #                 "StringEquals": {
+        #                     "s3:x-amz-acl": "bucket-owner-full-control",
+        #                     "AWS:SourceArn": !Join ['',['arn:aws:cloudtrail:', !Ref AWS::Region, ':' , !Ref AWS::AccountId, ':trail/Test-cloudtrail' ]],
+        #                 }
+        #             }
+        #         },
+        #         {
+        #             "Sid": "AWSCloudTrailWrite20150319 2",
+        #             "Effect": "Allow",
+        #             "Principal": {
+        #                 "Service": "cloudtrail.amazonaws.com"
+        #             },
+        #             "Action": "s3:PutObject",
+        #             "Resource": !Join ['', [!GetAtt JenkinsS3Bucket.Arn, '/AWSLogs/', !Ref OrganizationId, '/*']],
+        #             "Condition": {
+        #                 "StringEquals": {
+        #                     "s3:x-amz-acl": "bucket-owner-full-control",
+        #                     "AWS:SourceArn": !Join ['',['arn:aws:cloudtrail:', !Ref AWS::Region, ':' , !Ref AWS::AccountId, ':trail/Test-cloudtrail' ]],
+        #                 }
+        #             }
+        #         }
+        #     ]
+        # }
+
+
+# Outputs
+################################################################################################
+Outputs:
+  ArtifactsBucketName:
+    Description: 'The S3 Bucket Name'
+    Value: 
+      Ref: JenkinsS3Bucket
+    Export:
+      Name: S3BucketName
